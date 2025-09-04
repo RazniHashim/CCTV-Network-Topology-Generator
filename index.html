@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CCTV Topology Generator</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
+    label { display: inline-block; margin-top: 8px; }
+    input, button { margin: 10px; padding: 8px; font-size: 14px; }
+    svg { border: 1px solid #222; margin-top: 20px; display: block; margin-left: auto; margin-right: auto; background: #fff; }
+    .device { fill: #cfe9ff; stroke: #1b3b5a; stroke-width: 1.5; rx: 6; ry: 6; }
+    .label { font-size: 12px; text-anchor: middle; pointer-events: none; fill: #072033; }
+    .link { stroke: #072033; stroke-width: 2; fill: none; stroke-linecap: round; }
+    .controls { max-width: 900px; margin: 0 auto; }
+    .small { font-size: 12px; color: #444; display:block; margin-top:-6px; }
+  </style>
+</head>
+<body>
+  <h2>CCTV Network Topology Generator</h2>
+  <div class="controls">
+    <label>Enter Cameras per PoE Switch (space-separated):</label>
+    <input type="text" id="camerasInput" placeholder="e.g., 4 6 5" />
+    <br />
+    <label>Enter Number of NVRs:</label>
+    <input type="number" id="nvrInput" min="1" value="1" />
+    <br />
+    <label>
+      <input type="checkbox" id="includeAggregate" checked />
+      Include Aggregate Switch
+    </label>
+    <br />
+    <button id="generateBtn">Generate Topology</button>
+    <span class="small">Example: "4 4 4" → 3 PoE switches, each with 4 cameras.</span>
+  </div>
+
+  <svg id="topoSvg" width="1000" height="600" role="img" aria-label="CCTV network topology"></svg>
+
+  <script>
+    const svg = d3.select("#topoSvg");
+
+    function parseCamerasInput(str) {
+      return str.trim().split(/\s+/).filter(s => s.length).map(s => {
+        const n = Number(s);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : NaN;
+      });
+    }
+
+    function generateDiagram() {
+      const camerasInput = document.getElementById("camerasInput").value || "";
+      const nvrCount = parseInt(document.getElementById("nvrInput").value, 10);
+      const camerasPerPoE = parseCamerasInput(camerasInput);
+      const includeAggregate = document.getElementById("includeAggregate").checked;
+
+      if (!camerasPerPoE.length || camerasPerPoE.some(isNaN) || isNaN(nvrCount) || nvrCount < 1) {
+        alert("Please enter valid inputs. Example cameras: '4 6 5' and NVRs: 1");
+        return;
+      }
+
+      const poeCount = camerasPerPoE.length;
+
+      if (!includeAggregate && poeCount > 1) {
+        alert("Cannot disable Aggregate Switch when using multiple PoE switches.");
+        return;
+      }
+
+      // NEW CHECK: Prompt error if aggregate is not included but multiple NVRs exist
+      if (!includeAggregate && nvrCount > 1) {
+        alert("Cannot disable Aggregate Switch when using multiple NVRs.");
+        return;
+      }
+
+      svg.selectAll("*").remove();
+
+      const xPositions = {
+        cameras: 120,
+        poeSwitches: 300,
+        aggregate: 520,
+        nvrs: includeAggregate ? 800 : 600,
+        monitors: includeAggregate ? 1000 : 800
+      };
+
+      const baseSpacing = 90;
+
+      const components = [];
+      const poeSwitches = [];
+      const cameraBoxes = [];
+      const links = [];
+
+      // Optional: Aggregate switch
+      let aggregate = null;
+      const constantAggregateHeight = 250;
+
+      if (includeAggregate) {
+        aggregate = {
+          id: "Aggregate Switch",
+          x: xPositions.aggregate,
+          y: 300,
+          width: 140,
+          height: constantAggregateHeight
+        };
+        components.push(aggregate);
+      }
+
+      // PoE and Cameras
+      let poeOffset;
+      if (poeCount === 1) {
+        poeOffset = includeAggregate ? 300 : 300;
+      } else {
+        const poeGroupHeight = (poeCount - 1) * baseSpacing;
+        poeOffset = 300 - poeGroupHeight / 2;
+      }
+
+      camerasPerPoE.forEach((count, i) => {
+        const y = poeOffset + i * baseSpacing;
+        const camBox = { id: `${count} Cameras`, x: xPositions.cameras, y, width: 100, height: 44 };
+        const poeBox = { id: `PoE Switch ${i + 1}`, x: xPositions.poeSwitches, y, width: 110, height: 44 };
+        components.push(camBox, poeBox);
+        cameraBoxes.push(camBox);
+        poeSwitches.push(poeBox);
+      });
+
+      // NVRs & Monitors
+      const nvrGroupHeight = (nvrCount - 1) * baseSpacing;
+      const nvrOffset = 300 - nvrGroupHeight / 2;
+      const nvrs = [], monitors = [];
+
+      for (let i = 0; i < nvrCount; i++) {
+        const y = nvrOffset + i * baseSpacing;
+        const nvrBox = { id: `NVR ${i + 1}`, x: xPositions.nvrs, y, width: 110, height: 44 };
+        const monBox = { id: `Monitor ${i + 1}`, x: xPositions.monitors, y, width: 100, height: 44 };
+        components.push(nvrBox, monBox);
+        nvrs.push(nvrBox);
+        monitors.push(monBox);
+      }
+
+      // Draw devices
+      svg.selectAll("rect.device")
+        .data(components)
+        .enter()
+        .append("rect")
+        .attr("class", "device")
+        .attr("x", d => d.x - d.width / 2)
+        .attr("y", d => d.y - d.height / 2)
+        .attr("width", d => d.width)
+        .attr("height", d => d.height);
+
+      svg.selectAll("text.label")
+        .data(components)
+        .enter()
+        .append("text")
+        .attr("class", "label")
+        .attr("x", d => d.x)
+        .attr("y", d => d.y + 5)
+        .text(d => d.id);
+
+      // Camera -> PoE
+      cameraBoxes.forEach((cam, i) => {
+        links.push({
+          type: "straight",
+          source: { x: cam.x + cam.width / 2, y: cam.y },
+          target: { x: poeSwitches[i].x - poeSwitches[i].width / 2, y: poeSwitches[i].y }
+        });
+      });
+
+      // PoE → Aggregate or directly → NVR
+      poeSwitches.forEach((poe, i) => {
+        if (includeAggregate) {
+          if (poeCount === 1) {
+            links.push({
+              type: "straight",
+              source: { x: poe.x + poe.width / 2, y: poe.y },
+              target: { x: aggregate.x - aggregate.width / 2, y: aggregate.y }
+            });
+          } else {
+            const availableHeight = constantAggregateHeight - 40;
+            const stepY = poeCount > 1 ? availableHeight / (poeCount - 1) : 0;
+            const startY = aggregate.y - availableHeight / 2;
+            const targetY = startY + i * stepY;
+            const yDistance = Math.abs(targetY - aggregate.y);
+            const yMaxDistance = availableHeight / 2;
+            const staggerFactor = (yMaxDistance - yDistance) / yMaxDistance;
+            const midX = xPositions.poeSwitches + (xPositions.aggregate - xPositions.poeSwitches) / 2 * (1 - staggerFactor * 0.4);
+            links.push({
+              type: "L-shaped",
+              points: [
+                { x: poe.x + poe.width / 2, y: poe.y },
+                { x: midX, y: poe.y },
+                { x: midX, y: targetY },
+                { x: aggregate.x - aggregate.width / 2, y: targetY }
+              ]
+            });
+          }
+        } else {
+          // Direct PoE → NVR
+          nvrs.forEach(nvr => {
+            links.push({
+              type: "straight",
+              source: { x: poe.x + poe.width / 2, y: poe.y },
+              target: { x: nvr.x - nvr.width / 2, y: nvr.y }
+            });
+          });
+        }
+      });
+
+      // Aggregate → NVR
+      if (includeAggregate) {
+        const availableHeight = constantAggregateHeight - 40;
+        const startY = aggregate.y - availableHeight / 2;
+        nvrs.forEach((nvr, i) => {
+          const aggregateY = nvrCount > 1 ? startY + i * (availableHeight / (nvrCount - 1)) : aggregate.y;
+          const normalizedPosition = nvrCount > 1 ? Math.abs(i - (nvrCount - 1) / 2) / ((nvrCount - 1) / 2) : 0;
+          const minOffset = 20;
+          const maxStaggerDistance = 100;
+          const midX = xPositions.aggregate + aggregate.width / 2 + minOffset + (1 - normalizedPosition) * (maxStaggerDistance - minOffset);
+          links.push({
+            type: "L-shaped",
+            points: [
+              { x: aggregate.x + aggregate.width / 2, y: aggregateY },
+              { x: midX, y: aggregateY },
+              { x: midX, y: nvr.y },
+              { x: nvr.x - nvr.width / 2, y: nvr.y }
+            ]
+          });
+        });
+      }
+
+      // NVR → Monitor
+      nvrs.forEach((nvr, i) => {
+        links.push({
+          type: "straight",
+          source: { x: nvr.x + nvr.width / 2, y: nvr.y },
+          target: { x: monitors[i].x - monitors[i].width / 2, y: monitors[i].y }
+        });
+      });
+
+      // Draw links
+      svg.selectAll("path.link")
+        .data(links.filter(d => d.type === "L-shaped"))
+        .enter()
+        .append("path")
+        .attr("class", "link")
+        .attr("d", d => {
+          return `M ${d.points[0].x},${d.points[0].y} H ${d.points[1].x} V ${d.points[2].y} H ${d.points[3].x}`;
+        });
+
+      svg.selectAll("line.link")
+        .data(links.filter(d => d.type === "straight"))
+        .enter()
+        .append("line")
+        .attr("class", "link")
+        .attr("x1", d => d.source.x)
+        .attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x)
+        .attr("y2", d => d.target.y);
+
+      // Adjust SVG view
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      svg.selectAll("rect.device").each(function () {
+        const bbox = this.getBBox();
+        minX = Math.min(minX, bbox.x);
+        maxX = Math.max(maxX, bbox.x + bbox.width);
+        minY = Math.min(minY, bbox.y);
+        maxY = Math.max(maxY, bbox.y + bbox.height);
+      });
+
+      const padding = 80;
+      const newWidth = Math.max(1000, Math.ceil(maxX - minX + padding * 2));
+      const newHeight = Math.max(600, Math.ceil(maxY - minY + padding * 2));
+      svg.attr("width", newWidth).attr("height", newHeight);
+
+      const shiftX = padding - minX;
+      const shiftY = padding - minY;
+      svg.selectAll("*").attr("transform", `translate(${shiftX}, ${shiftY})`);
+    }
+
+    document.getElementById("generateBtn").addEventListener("click", generateDiagram);
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("camerasInput").value = "4";
+      document.getElementById("nvrInput").value = 1;
+      generateDiagram();
+    });
+  </script>
+</body>
+</html>
